@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Temple des Kacper</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      rel="preconnect"
+      href="https://fonts.gstatic.com"
+      crossorigin
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="stars"></div>
+    <main class="sanctuary">
+      <aside class="leaderboard card">
+        <header>
+          <h2>Leader Aura</h2>
+          <p>Les gardiens les plus lumineux.</p>
+        </header>
+        <ol id="leaderboard-list"></ol>
+        <button type="button" id="change-pseudo-btn" class="ghost-btn">
+          Changer de pseudo
+        </button>
+      </aside>
+
+      <section class="temple card">
+        <header class="intro">
+          <h1>Temple des Kacper</h1>
+          <p>Canalise l'aura en éveillant différentes formes de Kacper.</p>
+        </header>
+
+        <section class="aura-panel">
+          <section class="aura-display">
+            <span class="label">Aura</span>
+            <span id="aura-count">0.00</span>
+            <span class="rate">
+              <span id="aura-rate">0.00</span>
+              aura/s
+            </span>
+          </section>
+          <button type="button" id="meditate-btn">Pulse</button>
+        </section>
+
+        <section class="shop" id="kacper-list"></section>
+      </section>
+    </main>
+
+    <div class="pseudo-overlay hidden" id="pseudo-overlay">
+      <form class="pseudo-dialog" id="pseudo-form">
+        <h2>Entre dans le temple</h2>
+        <p>Choisis un pseudo pour que ton aura soit reconnue.</p>
+        <input
+          type="text"
+          id="pseudo-input"
+          placeholder="Ton pseudo"
+          maxlength="18"
+          required
+        />
+        <button type="submit">Commencer</button>
+      </form>
+    </div>
+
+    <template id="kacper-card-template">
+      <article class="kacper-card">
+        <header>
+          <h2 class="name"></h2>
+          <p class="description"></p>
+        </header>
+        <div class="stats">
+          <div>
+            <span class="value production"></span>
+            <span class="label">aura/s</span>
+          </div>
+          <div>
+            <span class="value cost"></span>
+            <span class="label">coût</span>
+          </div>
+          <div>
+            <span class="value owned"></span>
+            <span class="label">possédé</span>
+          </div>
+        </div>
+        <button type="button" class="buy-btn">Invoquer</button>
+      </article>
+    </template>
+
+    <script src="script.js"></script>
+  </body>
+</html>
