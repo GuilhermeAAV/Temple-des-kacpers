@@ -80,6 +80,21 @@ body {
   font-size: 0.9rem;
 }
 
+.leaderboard .status {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.leaderboard .status.success {
+  color: var(--success);
+}
+
+.leaderboard .status.error {
+  color: #ff9d9d;
+}
+
 .leaderboard ol {
   margin: 0;
   padding: 0;

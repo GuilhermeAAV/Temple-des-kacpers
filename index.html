@@ -23,6 +23,7 @@
         <header>
           <h2>Leader Aura</h2>
           <p>Les gardiens les plus lumineux.</p>
+          <p class="status" id="leaderboard-status">Connexion au temple...</p>
         </header>
         <ol id="leaderboard-list"></ol>
         <button type="button" id="change-pseudo-btn" class="ghost-btn">
@@ -91,6 +92,9 @@
       </article>
     </template>
 
+    <script>
+      window.KACPER_API_URL = "https://kacper-temple.fly.dev";
+    </script>
     <script src="script.js"></script>
   </body>
 </html>

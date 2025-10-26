@@ -8,11 +8,15 @@ const pseudoForm = document.getElementById("pseudo-form");
 const pseudoInput = document.getElementById("pseudo-input");
 const changePseudoBtn = document.getElementById("change-pseudo-btn");
 const leaderboardListEl = document.getElementById("leaderboard-list");
+const leaderboardStatusEl = document.getElementById("leaderboard-status");
 
 const MANUAL_GAIN = 0.01;
 const STORAGE_KEY = "kacperTempleState";
-const LEADERBOARD_KEY = "kacperTempleLeaderboard";
-const LEADERBOARD_LIMIT = 8;
+const LOCAL_LEADERBOARD_KEY = "kacperTempleLeaderboardCache";
+const LEADERBOARD_DISPLAY_LIMIT = 8;
+const API_BASE_URL =
+  window.KACPER_API_URL || window.TEMPLE_API_URL || "http://localhost:8787";
+const API_TIMEOUT_MS = 4000;
 const BASE_KACPERS = [
   {
     id: "baby",
@@ -90,43 +94,59 @@ function saveState(currentState) {
   }
 }
 
-function loadLeaderboard() {
+function normalizeLeaderboard(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .map((entry) => ({
+      name: (entry.name || "Anonyme").toString().slice(0, 32),
+      aura: Number(entry.aura) || 0,
+    }))
+    .filter((entry) => entry.name);
+}
+
+function loadLocalLeaderboard() {
   try {
-    const raw = localStorage.getItem(LEADERBOARD_KEY);
+    const raw = localStorage.getItem(LOCAL_LEADERBOARD_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((entry) => ({
-        name: entry.name || "Anonyme",
-        aura: Number(entry.aura) || 0,
-      }))
-      .slice(0, LEADERBOARD_LIMIT);
+    return normalizeLeaderboard(JSON.parse(raw));
   } catch (error) {
-    console.warn("Impossible de charger le leaderboard :", error);
+    console.warn("Impossible de charger le leaderboard local :", error);
     return [];
   }
 }
 
-function saveLeaderboard(list) {
+function saveLocalLeaderboard(entries) {
   try {
-    localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(list));
+    localStorage.setItem(
+      LOCAL_LEADERBOARD_KEY,
+      JSON.stringify(entries.slice(0, LEADERBOARD_DISPLAY_LIMIT))
+    );
   } catch (error) {
-    console.warn("Impossible d'enregistrer le leaderboard :", error);
+    console.warn("Impossible d'enregistrer le leaderboard local :", error);
   }
+}
+
+function setLeaderboardStatus(message, tone) {
+  if (!leaderboardStatusEl) return;
+  leaderboardStatusEl.textContent = message;
+  leaderboardStatusEl.classList.remove("success", "error");
+  if (tone === "success") leaderboardStatusEl.classList.add("success");
+  if (tone === "error") leaderboardStatusEl.classList.add("error");
 }
 
 let state = loadState();
 const elementsById = new Map();
-let leaderboard = loadLeaderboard();
+let leaderboard = loadLocalLeaderboard();
 let lastPersistTime = 0;
 let lastLeaderboardSyncTime = 0;
+let leaderboardSyncInFlight = false;
 
 function renderLeaderboard() {
   if (!leaderboardListEl) return;
   leaderboardListEl.innerHTML = "";
 
-  if (!leaderboard.length) {
+  const entries = leaderboard.slice(0, LEADERBOARD_DISPLAY_LIMIT);
+  if (!entries.length) {
     const emptyItem = document.createElement("li");
     emptyItem.className = "empty";
     emptyItem.textContent = "Aucun gardien encore.";
@@ -135,11 +155,9 @@ function renderLeaderboard() {
   }
 
   const fragment = document.createDocumentFragment();
-  leaderboard.forEach((entry, index) => {
+  entries.forEach((entry, index) => {
     const li = document.createElement("li");
-    if (entry.name === state.playerName) {
-      li.classList.add("active");
-    }
+    if (entry.name === state.playerName) li.classList.add("active");
 
     const nameWrap = document.createElement("span");
     nameWrap.className = "name";
@@ -161,41 +179,91 @@ function renderLeaderboard() {
   leaderboardListEl.appendChild(fragment);
 }
 
-function syncLeaderboard(force = false) {
-  if (!state.playerName) return;
-  const roundedAura = Number(state.aura.toFixed(2));
-  let changed = false;
+function abortableFetch(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  const opts = { ...options, signal: controller.signal };
+  return fetch(url, opts).finally(() => clearTimeout(timeout));
+}
 
-  const existing = leaderboard.find((entry) => entry.name === state.playerName);
-  if (existing) {
-    if (roundedAura > existing.aura) {
-      existing.aura = roundedAura;
-      changed = true;
-    }
-  } else if (force || roundedAura > 0) {
-    leaderboard.push({ name: state.playerName, aura: roundedAura });
-    changed = true;
+async function fetchLeaderboardFromServer() {
+  if (typeof fetch === "undefined") {
+    throw new Error("fetch indisponible");
   }
-
-  if (changed) {
-    leaderboard.sort((a, b) => b.aura - a.aura);
-    leaderboard = leaderboard.slice(0, LEADERBOARD_LIMIT);
-    saveLeaderboard(leaderboard);
+  const response = await abortableFetch(`${API_BASE_URL}/leaderboard`, {
+    method: "GET",
+  });
+  if (!response.ok) {
+    throw new Error(`GET /leaderboard failed with ${response.status}`);
   }
+  const data = await response.json();
+  return normalizeLeaderboard(data);
+}
 
-  renderLeaderboard();
+async function submitScoreToServer() {
+  if (typeof fetch === "undefined") {
+    throw new Error("fetch indisponible");
+  }
+  const payload = {
+    name: state.playerName,
+    aura: Number(state.aura.toFixed(2)),
+  };
+  const response = await abortableFetch(`${API_BASE_URL}/leaderboard`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(`POST /leaderboard failed with ${response.status}`);
+  }
+  const data = await response.json();
+  return normalizeLeaderboard(data);
 }
 
 function maybeSyncLeaderboard(force = false) {
   if (!state.playerName) {
-    if (force) renderLeaderboard();
+    renderLeaderboard();
     return;
   }
-
   const now = typeof performance !== "undefined" ? performance.now() : Date.now();
-  if (!force && now - lastLeaderboardSyncTime < 1500) return;
+  if (!force && now - lastLeaderboardSyncTime < 2000) return;
+  if (leaderboardSyncInFlight) return;
+
   lastLeaderboardSyncTime = now;
-  syncLeaderboard(force);
+  leaderboardSyncInFlight = true;
+
+  submitScoreToServer()
+    .then((remoteBoard) => {
+      leaderboard = remoteBoard;
+      saveLocalLeaderboard(remoteBoard);
+      setLeaderboardStatus("Connecté au temple.", "success");
+      renderLeaderboard();
+    })
+    .catch((error) => {
+      console.warn("Sync leaderboard échoué :", error);
+      setLeaderboardStatus("Serveur indisponible, affichage local.", "error");
+      leaderboard = loadLocalLeaderboard();
+      renderLeaderboard();
+    })
+    .finally(() => {
+      leaderboardSyncInFlight = false;
+    });
+}
+
+function bootstrapLeaderboard() {
+  renderLeaderboard();
+  fetchLeaderboardFromServer()
+    .then((remoteBoard) => {
+      leaderboard = remoteBoard;
+      saveLocalLeaderboard(remoteBoard);
+      setLeaderboardStatus("Connecté au temple.", "success");
+      renderLeaderboard();
+    })
+    .catch((error) => {
+      console.warn("Chargement du leaderboard distant impossible :", error);
+      setLeaderboardStatus("Serveur indisponible, affichage local.", "error");
+      renderLeaderboard();
+    });
 }
 
 function persistState(force = false) {
@@ -306,11 +374,11 @@ function handlePseudoSubmit(event) {
   state.playerName = value;
   closePseudoDialog();
   persistState(true);
-  syncLeaderboard(true);
+  maybeSyncLeaderboard(true);
 }
 
 initShop();
-renderLeaderboard();
+bootstrapLeaderboard();
 
 meditateBtn.addEventListener("click", () => {
   state.aura += MANUAL_GAIN;
