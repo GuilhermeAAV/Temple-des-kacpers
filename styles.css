@@ -224,6 +224,83 @@ body {
   transform: translateY(1px) scale(0.99);
 }
 
+.blessing {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.blessing header {
+  margin-bottom: 0.5rem;
+}
+
+.blessing h2 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.blessing header p {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.blessing-action {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+#blessing-btn {
+  padding: 0.85rem 1.5rem;
+  border-radius: 18px;
+  border: 1px solid var(--panel-stroke);
+  background: rgba(83, 248, 255, 0.15);
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease,
+    color 150ms ease;
+}
+
+#blessing-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+#blessing-btn:not(:disabled):hover {
+  background: rgba(83, 248, 255, 0.35);
+  border-color: rgba(83, 248, 255, 0.5);
+  color: #061015;
+}
+
+.blessing-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  min-height: 1.4em;
+}
+
+.blessing-lore {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.blessing-lore strong {
+  color: var(--text);
+}
+
+.blessing-lore span {
+  color: var(--success);
+}
+
 .pseudo-overlay {
   position: fixed;
   inset: 0;

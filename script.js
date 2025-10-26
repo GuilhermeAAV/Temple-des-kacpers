@@ -9,6 +9,9 @@ const pseudoInput = document.getElementById("pseudo-input");
 const changePseudoBtn = document.getElementById("change-pseudo-btn");
 const leaderboardListEl = document.getElementById("leaderboard-list");
 const leaderboardStatusEl = document.getElementById("leaderboard-status");
+const blessingPanel = document.getElementById("blessing-panel");
+const blessingBtn = document.getElementById("blessing-btn");
+const blessingStatusEl = document.getElementById("blessing-status");
 
 const MANUAL_GAIN = 0.05;
 const STORAGE_KEY = "kacperTempleState";
@@ -17,6 +20,29 @@ const LEADERBOARD_DISPLAY_LIMIT = 8;
 const API_BASE_URL =
   window.KACPER_API_URL || window.TEMPLE_API_URL || "http://localhost:8787";
 const API_TIMEOUT_MS = 4000;
+const BLESSING_UNLOCK_THRESHOLD = 10;
+const BLESSING_INITIAL_COST = 100;
+const BLESSING_COST_MULTIPLIER = 1.5;
+const BLESSING_REWARDS = [
+  {
+    id: "apple",
+    name: "La pomme de Kacper",
+    chance: 0.5,
+    bonus: 0.2,
+  },
+  {
+    id: "car",
+    name: "La voiture de Kacper",
+    chance: 0.05,
+    bonus: 1,
+  },
+  {
+    id: "lover",
+    name: "La meuf de Kacper",
+    chance: 0.00001,
+    bonus: 8,
+  },
+];
 const BASE_KACPERS = [
   {
     id: "baby",
@@ -50,6 +76,14 @@ const formatNumber = (value) =>
     maximumFractionDigits: value < 10 ? 2 : 1,
   }).format(value);
 
+function defaultBlessingState() {
+  return {
+    unlocked: false,
+    cost: BLESSING_INITIAL_COST,
+    purchaseCount: 0,
+  };
+}
+
 function cloneBaseKacpers(saved = []) {
   return BASE_KACPERS.map((base) => {
     const stored = saved.find((item) => item.id === base.id);
@@ -66,6 +100,7 @@ function defaultState() {
     aura: 0,
     playerName: "",
     kacpers: cloneBaseKacpers(),
+    blessing: defaultBlessingState(),
   };
 }
 
@@ -78,6 +113,17 @@ function loadState() {
       aura: Number(parsed.aura) || 0,
       playerName: parsed.playerName || "",
       kacpers: cloneBaseKacpers(parsed.kacpers || []),
+      blessing: {
+        ...defaultBlessingState(),
+        ...(parsed.blessing || {}),
+        unlocked: Boolean(parsed.blessing?.unlocked),
+        cost:
+          typeof parsed.blessing?.cost === "number" &&
+          parsed.blessing.cost > 0
+            ? parsed.blessing.cost
+            : BLESSING_INITIAL_COST,
+        purchaseCount: Number(parsed.blessing?.purchaseCount) || 0,
+      },
     };
   } catch (error) {
     console.warn("Impossible de charger la sauvegarde :", error);
@@ -95,6 +141,14 @@ function saveState(currentState) {
         cost,
         owned,
       })),
+      blessing: {
+        unlocked: Boolean(currentState.blessing?.unlocked),
+        cost:
+          typeof currentState.blessing?.cost === "number"
+            ? currentState.blessing.cost
+            : BLESSING_INITIAL_COST,
+        purchaseCount: Number(currentState.blessing?.purchaseCount) || 0,
+      },
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch (error) {
@@ -148,6 +202,9 @@ let leaderboard = loadLocalLeaderboard();
 let lastPersistTime = 0;
 let lastLeaderboardSyncTime = 0;
 let leaderboardSyncInFlight = false;
+let lastBlessingMessage = state.blessing?.unlocked
+  ? "Les esprits attendent ton offrande."
+  : `Accumule ${BLESSING_UNLOCK_THRESHOLD} auras pour débloquer le rituel.`;
 
 function renderLeaderboard() {
   if (!leaderboardListEl) return;
@@ -342,13 +399,17 @@ function refreshUI(rate = getAuraRate(), forcePersist = false) {
   auraCountEl.textContent = formatNumber(state.aura);
   auraRateEl.textContent = formatNumber(rate);
 
+  const wasUnlocked = state.blessing?.unlocked;
+  maybeUnlockBlessing();
+  updateBlessingUI();
+
   state.kacpers.forEach((kacper) => {
     const elements = elementsById.get(kacper.id);
     if (!elements) return;
     elements.button.disabled = state.aura < kacper.cost;
   });
 
-  persistState(forcePersist);
+  persistState(forcePersist || (!wasUnlocked && state.blessing?.unlocked));
   maybeSyncLeaderboard(forcePersist);
 }
 
@@ -398,6 +459,11 @@ changePseudoBtn.addEventListener("click", () => {
   openPseudoDialog(state.playerName);
 });
 
+if (blessingBtn) {
+  blessingBtn.addEventListener("click", attemptBlessingPurchase);
+  updateBlessingUI();
+}
+
 if (!state.playerName) {
   openPseudoDialog("");
 } else {
@@ -405,3 +471,85 @@ if (!state.playerName) {
 }
 
 requestAnimationFrame(updateLoop);
+
+function setBlessingStatus(message) {
+  if (!blessingStatusEl) return;
+  blessingStatusEl.textContent = message;
+  lastBlessingMessage = message;
+}
+
+function maybeUnlockBlessing() {
+  if (!state.blessing) {
+    state.blessing = defaultBlessingState();
+  }
+  if (state.blessing.unlocked) return;
+
+  if (state.aura >= BLESSING_UNLOCK_THRESHOLD) {
+    state.blessing.unlocked = true;
+    setBlessingStatus("Les esprits attendent ton offrande.");
+  } else {
+    setBlessingStatus(
+      `Accumule ${BLESSING_UNLOCK_THRESHOLD} auras pour débloquer le rituel.`
+    );
+  }
+}
+
+function updateBlessingUI() {
+  if (!blessingPanel || !state.blessing) return;
+
+  if (!state.blessing.unlocked) {
+    blessingPanel.classList.add("hidden");
+    return;
+  }
+
+  blessingPanel.classList.remove("hidden");
+
+  if (blessingBtn) {
+    blessingBtn.disabled = state.aura < state.blessing.cost;
+    blessingBtn.textContent = `Rituel (${formatNumber(
+      state.blessing.cost
+    )} aura)`;
+  }
+
+  setBlessingStatus(lastBlessingMessage);
+}
+
+function attemptBlessingPurchase() {
+  if (!state.blessing?.unlocked) return;
+  const cost = state.blessing.cost;
+  if (state.aura < cost) return;
+
+  state.aura -= cost;
+  state.blessing.purchaseCount += 1;
+  state.blessing.cost = Number(
+    (state.blessing.cost * BLESSING_COST_MULTIPLIER).toFixed(2)
+  );
+
+  const reward = rollBlessingReward();
+  if (reward) {
+    const previousAura = state.aura;
+    state.aura = Number((state.aura * (1 + reward.bonus)).toFixed(4));
+    const gained = state.aura - previousAura;
+    setBlessingStatus(
+      `${reward.name} t'offre +${Math.round(
+        reward.bonus * 100
+      )}% d'aura (${formatNumber(gained)}).`
+    );
+  } else {
+    setBlessingStatus("Les esprits restent silencieux... aucune bénédiction.");
+  }
+
+  refreshUI(undefined, true);
+}
+
+function rollBlessingReward() {
+  const roll = Math.random();
+  let cumulative = 0;
+  for (const reward of BLESSING_REWARDS) {
+    cumulative += reward.chance;
+    if (roll < cumulative) {
+      return reward;
+    }
+  }
+  return null;
+}

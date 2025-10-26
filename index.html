@@ -49,6 +49,39 @@
           <button type="button" id="meditate-btn">Pulse</button>
         </section>
 
+        <section class="blessing card hidden" id="blessing-panel">
+          <header>
+            <h2>Offrande mystique</h2>
+            <p>
+              Tente ta chance pour amplifier ton aura. Le coût augmente après
+              chaque rituel.
+            </p>
+          </header>
+          <div class="blessing-action">
+            <button type="button" id="blessing-btn" disabled>
+              Rituel (100 aura)
+            </button>
+            <p id="blessing-status" class="blessing-status">
+              Accumule 10 auras pour débloquer le rituel.
+            </p>
+          </div>
+          <ul class="blessing-lore">
+            <li>
+              <strong>La pomme de Kacper</strong> &mdash; 50&nbsp;% :
+              <span>+20&nbsp;% d'aura</span>
+            </li>
+            <li>
+              <strong>La voiture de Kacper</strong> &mdash; 5&nbsp;% :
+              <span>+100&nbsp;% d'aura</span>
+            </li>
+            <li>
+              <strong>La meuf de Kacper</strong> &mdash; 0,001&nbsp;% :
+              <span>+800&nbsp;% d'aura</span>
+            </li>
+            <li>Autrement : les esprits restent silencieux.</li>
+          </ul>
+        </section>
+
         <section class="shop" id="kacper-list"></section>
       </section>
     </main>
