@@ -34,6 +34,14 @@ const BASE_KACPERS = [
     cost: 25,
     owned: 0,
   },
+    {
+    id: "chemise",
+    name: "Kacper avec chemise",
+    description: "Ca chemise éclaire nos soirée",
+    production: 7.5,
+    cost: 1000,
+    owned: 0,
+  },
 ];
 
 const formatNumber = (value) =>
