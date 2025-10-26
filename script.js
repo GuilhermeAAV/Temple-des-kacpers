@@ -10,7 +10,7 @@ const changePseudoBtn = document.getElementById("change-pseudo-btn");
 const leaderboardListEl = document.getElementById("leaderboard-list");
 const leaderboardStatusEl = document.getElementById("leaderboard-status");
 
-const MANUAL_GAIN = 0.01;
+const MANUAL_GAIN = 0.05;
 const STORAGE_KEY = "kacperTempleState";
 const LOCAL_LEADERBOARD_KEY = "kacperTempleLeaderboardCache";
 const LEADERBOARD_DISPLAY_LIMIT = 8;
