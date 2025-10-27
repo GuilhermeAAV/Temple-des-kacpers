@@ -12,14 +12,32 @@ const leaderboardStatusEl = document.getElementById("leaderboard-status");
 const blessingPanel = document.getElementById("blessing-panel");
 const blessingBtn = document.getElementById("blessing-btn");
 const blessingStatusEl = document.getElementById("blessing-status");
+const accountBtn = document.getElementById("account-btn");
+const accountOverlay = document.getElementById("account-overlay");
+const accountLoginTab = document.getElementById("account-login-tab");
+const accountRegisterTab = document.getElementById("account-register-tab");
+const loginForm = document.getElementById("login-form");
+const registerForm = document.getElementById("register-form");
+const loginNameInput = document.getElementById("login-name");
+const loginPasswordInput = document.getElementById("login-password");
+const registerNameInput = document.getElementById("register-name");
+const registerPasswordInput = document.getElementById("register-password");
+const registerConfirmInput = document.getElementById("register-confirm");
+const loginErrorEl = document.getElementById("login-error");
+const registerErrorEl = document.getElementById("register-error");
+const accountStatusEl = document.getElementById("account-status");
+const logoutBtn = document.getElementById("logout-btn");
+const closeAccountBtn = document.getElementById("close-account-btn");
 
 const MANUAL_GAIN = 0.05;
 const STORAGE_KEY = "kacperTempleState";
 const LOCAL_LEADERBOARD_KEY = "kacperTempleLeaderboardCache";
+const AUTH_STORAGE_KEY = "kacperTempleAuth";
 const LEADERBOARD_DISPLAY_LIMIT = 8;
 const API_BASE_URL =
   window.KACPER_API_URL || window.TEMPLE_API_URL || "http://localhost:8787";
 const API_TIMEOUT_MS = 4000;
+const REMOTE_SAVE_DEBOUNCE_MS = 600;
 const BLESSING_UNLOCK_THRESHOLD = 10;
 const BLESSING_INITIAL_COST = 100;
 const BLESSING_COST_MULTIPLIER = 1.5;
@@ -177,29 +195,75 @@ function defaultState() {
   };
 }
 
+function sanitizeLastOutcome(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  if (raw.type === "reward") {
+    const bonus = Number(raw.bonus);
+    return {
+      type: "reward",
+      id: (raw.id || "").toString().slice(0, 64),
+      name: (raw.name || "").toString().slice(0, 64),
+      bonus: Number.isFinite(bonus) ? bonus : 0,
+    };
+  }
+  if (raw.type === "none") {
+    return { type: "none" };
+  }
+  return null;
+}
+
+function deserializeState(raw) {
+  if (!raw || typeof raw !== "object") {
+    return defaultState();
+  }
+
+  const state = defaultState();
+  const auraValue = Number(raw.aura);
+  state.aura = Number.isFinite(auraValue) && auraValue >= 0 ? auraValue : 0;
+  state.playerName = (raw.playerName || "").toString().slice(0, 32);
+  state.kacpers = cloneBaseKacpers(raw.kacpers || []);
+  state.blessing = {
+    ...defaultBlessingState(),
+    unlocked: Boolean(raw.blessing?.unlocked),
+    cost:
+      typeof raw.blessing?.cost === "number" && raw.blessing.cost > 0
+        ? raw.blessing.cost
+        : BLESSING_INITIAL_COST,
+    purchaseCount: Number(raw.blessing?.purchaseCount) || 0,
+    rateBonus: Number(raw.blessing?.rateBonus) || 0,
+    lastOutcome: sanitizeLastOutcome(raw.blessing?.lastOutcome),
+  };
+  return state;
+}
+
+function serializeState(currentState) {
+  return {
+    aura: Number(currentState.aura) || 0,
+    playerName: (currentState.playerName || "").toString().slice(0, 32),
+    kacpers: currentState.kacpers.map(({ id, cost, owned }) => ({
+      id,
+      cost: Number(cost) || 0,
+      owned: Number(owned) || 0,
+    })),
+    blessing: {
+      unlocked: Boolean(currentState.blessing?.unlocked),
+      cost:
+        typeof currentState.blessing?.cost === "number" &&
+        currentState.blessing.cost > 0
+          ? currentState.blessing.cost
+          : BLESSING_INITIAL_COST,
+      purchaseCount: Number(currentState.blessing?.purchaseCount) || 0,
+      rateBonus: Number(currentState.blessing?.rateBonus) || 0,
+      lastOutcome: sanitizeLastOutcome(currentState.blessing?.lastOutcome),
+    },
+  };
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState();
-    const parsed = JSON.parse(raw);
-    return {
-      aura: Number(parsed.aura) || 0,
-      playerName: parsed.playerName || "",
-      kacpers: cloneBaseKacpers(parsed.kacpers || []),
-      blessing: {
-        ...defaultBlessingState(),
-        ...(parsed.blessing || {}),
-        unlocked: Boolean(parsed.blessing?.unlocked),
-        cost:
-          typeof parsed.blessing?.cost === "number" &&
-          parsed.blessing.cost > 0
-            ? parsed.blessing.cost
-            : BLESSING_INITIAL_COST,
-        purchaseCount: Number(parsed.blessing?.purchaseCount) || 0,
-        rateBonus: Number(parsed.blessing?.rateBonus) || 0,
-        lastOutcome: parsed.blessing?.lastOutcome || null,
-      },
-    };
+    return deserializeState(JSON.parse(raw));
   } catch (error) {
     console.warn("Impossible de charger la sauvegarde :", error);
     return defaultState();
@@ -208,28 +272,46 @@ function loadState() {
 
 function saveState(currentState) {
   try {
-    const payload = {
-      aura: currentState.aura,
-      playerName: currentState.playerName,
-      kacpers: currentState.kacpers.map(({ id, cost, owned }) => ({
-        id,
-        cost,
-        owned,
-      })),
-      blessing: {
-        unlocked: Boolean(currentState.blessing?.unlocked),
-        cost:
-          typeof currentState.blessing?.cost === "number"
-            ? currentState.blessing.cost
-            : BLESSING_INITIAL_COST,
-        purchaseCount: Number(currentState.blessing?.purchaseCount) || 0,
-        rateBonus: Number(currentState.blessing?.rateBonus) || 0,
-        lastOutcome: currentState.blessing?.lastOutcome || null,
-      },
-    };
+    const payload = serializeState(currentState);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch (error) {
     console.warn("Impossible d'enregistrer la sauvegarde :", error);
+  }
+}
+
+function loadAuthSession() {
+  try {
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const name = (parsed.name || "").toString().slice(0, 32);
+    const token = (parsed.token || "").toString().trim();
+    if (!name || !token) return null;
+    return { name, token };
+  } catch (error) {
+    console.warn("Impossible de charger la session :", error);
+    return null;
+  }
+}
+
+function saveAuthSession(session) {
+  try {
+    if (!session) {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      return;
+    }
+    const payload = {
+      name: (session.name || "").toString().slice(0, 32),
+      token: (session.token || "").toString().trim(),
+    };
+    if (!payload.name || !payload.token) {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    console.warn("Impossible d'enregistrer la session :", error);
   }
 }
 
@@ -279,6 +361,227 @@ let leaderboard = loadLocalLeaderboard();
 let lastPersistTime = 0;
 let lastLeaderboardSyncTime = 0;
 let leaderboardSyncInFlight = false;
+let accountSession = loadAuthSession();
+let remotePersistTimeoutId = null;
+let remotePersistInFlight = false;
+let remotePersistRequested = false;
+let suppressRemotePersist = false;
+let accountMode = "login";
+
+function applyAccountSessionUI() {
+  if (accountBtn) {
+    accountBtn.textContent = accountSession
+      ? `Compte (${accountSession.name})`
+      : "Se connecter";
+  }
+  if (logoutBtn) {
+    logoutBtn.classList.toggle("hidden", !accountSession);
+  }
+}
+
+function updateAccountStatus(message = "", tone) {
+  if (!accountStatusEl) return;
+  accountStatusEl.textContent = message;
+  accountStatusEl.classList.remove("success", "error");
+  if (tone === "success") accountStatusEl.classList.add("success");
+  if (tone === "error") accountStatusEl.classList.add("error");
+}
+
+function setAccountMode(mode) {
+  accountMode = mode === "register" ? "register" : "login";
+  if (accountLoginTab) {
+    accountLoginTab.classList.toggle("active", accountMode === "login");
+  }
+  if (accountRegisterTab) {
+    accountRegisterTab.classList.toggle("active", accountMode === "register");
+  }
+  if (loginForm) {
+    loginForm.classList.toggle("hidden", accountMode !== "login");
+  }
+  if (registerForm) {
+    registerForm.classList.toggle("hidden", accountMode !== "register");
+  }
+  clearFormError(loginErrorEl);
+  clearFormError(registerErrorEl);
+}
+
+function openAccountModal(mode = accountSession ? "login" : "register") {
+  if (!accountOverlay) return;
+  setAccountMode(mode);
+  accountOverlay.classList.remove("hidden");
+  updateAccountStatus(
+    accountSession ? `Connecte en tant que ${accountSession.name}` : ""
+  );
+  setTimeout(() => {
+    const target =
+      accountMode === "login" ? loginNameInput || loginPasswordInput : registerNameInput;
+    target?.focus();
+  }, 0);
+}
+
+function closeAccountModal() {
+  if (!accountOverlay) return;
+  accountOverlay.classList.add("hidden");
+  resetAccountForms();
+  updateAccountStatus("");
+}
+
+function clearFormError(target) {
+  if (!target) return;
+  target.textContent = "";
+}
+
+function setFormError(target, message) {
+  if (!target) return;
+  target.textContent = message || "";
+}
+
+function setFormLoading(form, isLoading) {
+  if (!form) return;
+  const elements = form.querySelectorAll("input, button");
+  elements.forEach((element) => {
+    element.disabled = isLoading;
+  });
+}
+
+function resetAccountForms() {
+  loginForm?.reset();
+  registerForm?.reset();
+  clearFormError(loginErrorEl);
+  clearFormError(registerErrorEl);
+}
+
+function setAccountSession(session) {
+  if (session && session.name && session.token) {
+    accountSession = {
+      name: session.name.toString().slice(0, 32),
+      token: session.token.toString(),
+    };
+  } else {
+    accountSession = null;
+  }
+  saveAuthSession(accountSession);
+  applyAccountSessionUI();
+}
+
+async function handleLoginSubmit(event) {
+  event.preventDefault();
+  if (!loginForm) return;
+
+  const name = sanitizeAccountName(loginNameInput?.value || "");
+  const password = loginPasswordInput?.value || "";
+
+  if (!name) {
+    setFormError(loginErrorEl, "Choisis un nom d'esprit.");
+    loginNameInput?.focus();
+    return;
+  }
+
+  if (!password) {
+    setFormError(loginErrorEl, "Entre ton mot de passe.");
+    loginPasswordInput?.focus();
+    return;
+  }
+
+  setFormError(loginErrorEl, "");
+  updateAccountStatus("Connexion au temple en cours...");
+  setFormLoading(loginForm, true);
+
+  try {
+    const response = await loginAccountRequest(name, password);
+    const accountName = response?.account?.name || name;
+    if (!response?.token) {
+      throw new Error("Session invalide.");
+    }
+    setAccountSession({ name: accountName, token: response.token });
+    if (response.state) {
+      applyRemoteState(response.state);
+    } else {
+      maybeSyncLeaderboard(true);
+    }
+    updateAccountStatus(`Connecte en tant que ${accountName}`, "success");
+    closeAccountModal();
+  } catch (error) {
+    console.warn("Connexion impossible :", error);
+    const message =
+      typeof error?.message === "string" && error.message
+        ? error.message
+        : "Connexion impossible, reessaie.";
+    setFormError(loginErrorEl, message);
+    updateAccountStatus("Connexion impossible.", "error");
+  } finally {
+    setFormLoading(loginForm, false);
+  }
+}
+
+async function handleRegisterSubmit(event) {
+  event.preventDefault();
+  if (!registerForm) return;
+
+  const name = sanitizeAccountName(registerNameInput?.value || "");
+  const password = registerPasswordInput?.value || "";
+  const confirm = registerConfirmInput?.value || "";
+
+  if (!name || name.length < 3) {
+    setFormError(registerErrorEl, "Choisis un nom d'esprit (3 caracteres min).");
+    registerNameInput?.focus();
+    return;
+  }
+
+  if (password.length < 6) {
+    setFormError(registerErrorEl, "Mot de passe trop court (6 caracteres min).");
+    registerPasswordInput?.focus();
+    return;
+  }
+
+  if (password !== confirm) {
+    setFormError(registerErrorEl, "Les mots de passe ne correspondent pas.");
+    registerConfirmInput?.focus();
+    return;
+  }
+
+  setFormError(registerErrorEl, "");
+  updateAccountStatus("Creation du compte...");
+  setFormLoading(registerForm, true);
+
+  try {
+    const response = await registerAccountRequest(name, password);
+    const accountName = response?.account?.name || name;
+    if (!response?.token) {
+      throw new Error("Session invalide.");
+    }
+    setAccountSession({ name: accountName, token: response.token });
+    if (response.state) {
+      applyRemoteState(response.state);
+    } else {
+      maybeSyncLeaderboard(true);
+    }
+    updateAccountStatus(`Bienvenue ${accountName} !`, "success");
+    closeAccountModal();
+  } catch (error) {
+    console.warn("Creation de compte impossible :", error);
+    const message =
+      typeof error?.message === "string" && error.message
+        ? error.message
+        : "Creation impossible, reessaie.";
+    setFormError(registerErrorEl, message);
+    updateAccountStatus("Creation impossible.", "error");
+  } finally {
+    setFormLoading(registerForm, false);
+  }
+}
+
+function handleLogout(event) {
+  event?.preventDefault();
+  setAccountSession(null);
+  if (remotePersistTimeoutId) {
+    clearTimeout(remotePersistTimeoutId);
+    remotePersistTimeoutId = null;
+  }
+  remotePersistRequested = false;
+  updateAccountStatus("Deconnecte.", "success");
+  closeAccountModal();
+}
 
 function renderLeaderboard() {
   if (!leaderboardListEl) return;
@@ -359,6 +662,135 @@ async function submitScoreToServer() {
   return normalizeLeaderboard(data);
 }
 
+async function callTempleApi(path, { method = "GET", body, auth = false } = {}) {
+  if (typeof fetch === "undefined") {
+    throw new Error("fetch indisponible");
+  }
+
+  const headers = {};
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (auth) {
+    if (!accountSession?.token) {
+      throw new Error("Session invalide");
+    }
+    headers.Authorization = `Bearer ${accountSession.token}`;
+  }
+
+  const response = await abortableFetch(`${API_BASE_URL}${path}`, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+
+  let payload = null;
+  if (response.status !== 204) {
+    try {
+      payload = await response.json();
+    } catch (error) {
+      payload = null;
+    }
+  }
+
+  if (!response.ok) {
+    const message =
+      payload && typeof payload === "object" && payload.error
+        ? payload.error.toString()
+        : `Requete ${method} ${path} echouee (${response.status})`;
+    const rejection = new Error(message);
+    rejection.status = response.status;
+    rejection.payload = payload;
+    throw rejection;
+  }
+
+  return payload;
+}
+
+function sanitizeAccountName(name) {
+  return name.toString().trim().slice(0, 32);
+}
+
+async function registerAccountRequest(name, password) {
+  return callTempleApi("/auth/register", {
+    method: "POST",
+    body: { name: sanitizeAccountName(name), password },
+  });
+}
+
+async function loginAccountRequest(name, password) {
+  return callTempleApi("/auth/login", {
+    method: "POST",
+    body: { name: sanitizeAccountName(name), password },
+  });
+}
+
+async function fetchProgressFromServer() {
+  return callTempleApi("/progress", { method: "GET", auth: true });
+}
+
+async function saveProgressToServer(payload) {
+  return callTempleApi("/progress", {
+    method: "POST",
+    body: { state: payload },
+    auth: true,
+  });
+}
+
+function applyRemoteState(rawState, { syncLeaderboard = true } = {}) {
+  if (!rawState) return;
+  const normalized = deserializeState(rawState);
+  suppressRemotePersist = true;
+  state.aura = normalized.aura;
+  state.playerName = normalized.playerName;
+  state.kacpers = normalized.kacpers;
+  state.blessing = normalized.blessing;
+  saveState(state);
+  refreshUI(undefined, false);
+  suppressRemotePersist = false;
+  if (syncLeaderboard) {
+    maybeSyncLeaderboard(true);
+  }
+}
+
+async function bootstrapAccountSession() {
+  applyAccountSessionUI();
+  if (!accountSession?.token) {
+    if (!state.playerName) {
+      openPseudoDialog("");
+    } else {
+      maybeSyncLeaderboard(true);
+    }
+    return;
+  }
+
+  updateAccountStatus(`Chargement de ${accountSession.name}...`);
+  try {
+    const response = await fetchProgressFromServer();
+    const accountName = response?.account?.name || accountSession.name;
+    setAccountSession({ name: accountName, token: accountSession.token });
+    if (response?.state) {
+      applyRemoteState(response.state);
+    } else if (!state.playerName) {
+      state.playerName = accountName;
+      saveState(state);
+    }
+    updateAccountStatus(`Connecte en tant que ${accountName}`, "success");
+  } catch (error) {
+    console.warn("Impossible de charger la progression distante :", error);
+    updateAccountStatus("Serveur inaccessible pour le compte.", "error");
+    if (error?.status === 401) {
+      setAccountSession(null);
+    }
+  } finally {
+    if (!state.playerName) {
+      openPseudoDialog("");
+    } else {
+      maybeSyncLeaderboard(true);
+    }
+  }
+}
+
 function maybeSyncLeaderboard(force = false) {
   if (!state.playerName) {
     renderLeaderboard();
@@ -405,11 +837,71 @@ function bootstrapLeaderboard() {
     });
 }
 
+function scheduleRemotePersist(force = false) {
+  if (!accountSession?.token) return;
+  remotePersistRequested = true;
+
+  if (remotePersistInFlight) {
+    return;
+  }
+
+  if (remotePersistTimeoutId) {
+    if (force) {
+      clearTimeout(remotePersistTimeoutId);
+      remotePersistTimeoutId = setTimeout(runRemotePersist, 0);
+    }
+    return;
+  }
+
+  const delay = force ? 0 : REMOTE_SAVE_DEBOUNCE_MS;
+  remotePersistTimeoutId = setTimeout(runRemotePersist, delay);
+}
+
+async function runRemotePersist() {
+  if (!accountSession?.token) {
+    remotePersistRequested = false;
+    if (remotePersistTimeoutId) {
+      clearTimeout(remotePersistTimeoutId);
+      remotePersistTimeoutId = null;
+    }
+    return;
+  }
+
+  if (remotePersistInFlight) return;
+
+  remotePersistInFlight = true;
+  if (remotePersistTimeoutId) {
+    clearTimeout(remotePersistTimeoutId);
+    remotePersistTimeoutId = null;
+  }
+
+  const payload = serializeState(state);
+  try {
+    const response = await saveProgressToServer(payload);
+    remotePersistRequested = false;
+    if (response?.state) {
+      applyRemoteState(response.state, { syncLeaderboard: false });
+    }
+  } catch (error) {
+    console.warn("Sauvegarde distante impossible :", error);
+    remotePersistRequested = true;
+  } finally {
+    remotePersistInFlight = false;
+    if (remotePersistRequested && !remotePersistTimeoutId) {
+      remotePersistTimeoutId = setTimeout(runRemotePersist, REMOTE_SAVE_DEBOUNCE_MS);
+    }
+  }
+}
+
 function persistState(force = false) {
   const now = typeof performance !== "undefined" ? performance.now() : Date.now();
   if (!force && now - lastPersistTime < 1000) return;
   lastPersistTime = now;
   saveState(state);
+  if (suppressRemotePersist) return;
+  if (accountSession?.token) {
+    scheduleRemotePersist(force);
+  }
 }
 
 function initShop() {
@@ -525,26 +1017,60 @@ function handlePseudoSubmit(event) {
 initShop();
 bootstrapLeaderboard();
 
-meditateBtn.addEventListener("click", () => {
-  state.aura += MANUAL_GAIN;
-  refreshUI(undefined, true);
-});
+if (meditateBtn) {
+  meditateBtn.addEventListener("click", () => {
+    state.aura += MANUAL_GAIN;
+    refreshUI(undefined, true);
+  });
+}
 
-pseudoForm.addEventListener("submit", handlePseudoSubmit);
-changePseudoBtn.addEventListener("click", () => {
-  openPseudoDialog(state.playerName);
-});
+if (pseudoForm) {
+  pseudoForm.addEventListener("submit", handlePseudoSubmit);
+}
+if (changePseudoBtn) {
+  changePseudoBtn.addEventListener("click", () => {
+    openPseudoDialog(state.playerName);
+  });
+}
+
+if (accountBtn) {
+  accountBtn.addEventListener("click", () => {
+    openAccountModal(accountSession ? "login" : "register");
+  });
+}
+if (accountLoginTab) {
+  accountLoginTab.addEventListener("click", () => setAccountMode("login"));
+}
+if (accountRegisterTab) {
+  accountRegisterTab.addEventListener("click", () => setAccountMode("register"));
+}
+if (closeAccountBtn) {
+  closeAccountBtn.addEventListener("click", closeAccountModal);
+}
+if (logoutBtn) {
+  logoutBtn.addEventListener("click", handleLogout);
+}
+if (accountOverlay) {
+  accountOverlay.addEventListener("click", (event) => {
+    if (event.target === accountOverlay) {
+      closeAccountModal();
+    }
+  });
+}
+if (loginForm) {
+  loginForm.addEventListener("submit", handleLoginSubmit);
+}
+if (registerForm) {
+  registerForm.addEventListener("submit", handleRegisterSubmit);
+}
 
 if (blessingBtn) {
   blessingBtn.addEventListener("click", attemptBlessingPurchase);
   updateBlessingUI();
 }
 
-if (!state.playerName) {
-  openPseudoDialog("");
-} else {
-  maybeSyncLeaderboard(true);
-}
+applyAccountSessionUI();
+bootstrapAccountSession();
 
 requestAnimationFrame(updateLoop);
 
@@ -649,3 +1175,5 @@ function rollBlessingReward() {
   }
   return null;
 }
+
+

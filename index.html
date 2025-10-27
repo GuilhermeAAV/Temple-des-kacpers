@@ -29,6 +29,9 @@
         <button type="button" id="change-pseudo-btn" class="ghost-btn">
           Changer de pseudo
         </button>
+        <button type="button" id="account-btn" class="ghost-btn">
+          Gerer mon compte
+        </button>
       </aside>
 
       <section class="temple card">
@@ -89,6 +92,85 @@
         <section class="shop" id="kacper-list"></section>
       </section>
     </main>
+
+    <div class="pseudo-overlay hidden" id="account-overlay">
+      <div class="pseudo-dialog account-dialog">
+        <h2>Compte du temple</h2>
+        <p id="account-description">
+          Connecte toi pour retrouver ta progression partout.
+        </p>
+        <div class="account-tabs">
+          <button type="button" id="account-login-tab" class="account-tab active">
+            Connexion
+          </button>
+          <button type="button" id="account-register-tab" class="account-tab">
+            Inscription
+          </button>
+        </div>
+        <form class="account-form" id="login-form">
+          <label class="field">
+            <span>Nom d'esprit</span>
+            <input
+              type="text"
+              id="login-name"
+              maxlength="32"
+              autocomplete="username"
+              required
+            />
+          </label>
+          <label class="field">
+            <span>Mot de passe</span>
+            <input
+              type="password"
+              id="login-password"
+              autocomplete="current-password"
+              required
+            />
+          </label>
+          <p class="form-error" id="login-error"></p>
+          <button type="submit">Se connecter</button>
+        </form>
+        <form class="account-form hidden" id="register-form">
+          <label class="field">
+            <span>Nom d'esprit</span>
+            <input
+              type="text"
+              id="register-name"
+              maxlength="32"
+              autocomplete="username"
+              required
+            />
+          </label>
+          <label class="field">
+            <span>Mot de passe</span>
+            <input
+              type="password"
+              id="register-password"
+              autocomplete="new-password"
+              required
+            />
+          </label>
+          <label class="field">
+            <span>Confirmation</span>
+            <input
+              type="password"
+              id="register-confirm"
+              autocomplete="new-password"
+              required
+            />
+          </label>
+          <p class="form-error" id="register-error"></p>
+          <button type="submit">Creer un compte</button>
+        </form>
+        <p class="account-status" id="account-status"></p>
+        <button type="button" id="logout-btn" class="ghost-btn hidden">
+          Se deconnecter
+        </button>
+        <button type="button" id="close-account-btn" class="ghost-btn">
+          Fermer
+        </button>
+      </div>
+    </div>
 
     <div class="pseudo-overlay hidden" id="pseudo-overlay">
       <form class="pseudo-dialog" id="pseudo-form">
