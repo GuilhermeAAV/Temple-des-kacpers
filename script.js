@@ -70,7 +70,7 @@ const BASE_KACPERS = [
     {
     id: "chemise",
     name: "Kacper avec chemise",
-    description: "Ca chemise éclaire nos soirées",
+    description: "Ca chemise éclaire nos soirées.",
     production: 7.5,
     cost: 1000,
     owned: 0,
@@ -78,18 +78,74 @@ const BASE_KACPERS = [
   {
     id: "daily",
     name: "Daily Kacper",
-    description: "Les aventures de daily kacper ne font que commencer",
+    description: "Les aventures de daily kacper ne font que commencer.",
     production: 250,
     cost: 75000,
     owned: 0,
   },
+    {
+    id: "danse",
+    name: "Kacper dansant",
+    description: "Ses mouvements vous laissent en trance.",
+    production: 4000,
+    cost: 20000000,
+    owned: 0,
+  },
+      {
+    id: "pecho",
+    name: "Kacper qui pécho",
+    description: "Kacper a réussi à trouver sa femelle, c'est un événement rare.",
+    production: 150000,
+    cost: 4000000000,
+    owned: 0,
+  },
 ];
 
-const formatNumber = (value) =>
-  new Intl.NumberFormat("fr-FR", {
-    minimumFractionDigits: value < 10 ? 2 : 1,
-    maximumFractionDigits: value < 10 ? 2 : 1,
-  }).format(value);
+const formatNumber = (value) => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "0";
+
+  const absValue = Math.abs(value);
+
+  if (absValue < 1000) {
+    return new Intl.NumberFormat("fr-FR", {
+      minimumFractionDigits: absValue < 10 ? 2 : 1,
+      maximumFractionDigits: absValue < 10 ? 2 : 1,
+    }).format(value);
+  }
+
+  const suffixes = ["", "K", "m", "M", "T", "P", "E"];
+  const maxTier = suffixes.length - 1;
+  const baseTier = Math.min(
+    maxTier,
+    Math.floor(Math.log10(absValue) / 3)
+  );
+
+  const computeDigits = (num) => {
+    const absNum = Math.abs(num);
+    if (absNum >= 100) return 0;
+    if (absNum >= 10) return 1;
+    return 2;
+  };
+
+  let tier = baseTier;
+  let scaled = value / Math.pow(10, tier * 3);
+  let digits = computeDigits(scaled);
+  let rounded = Number(scaled.toFixed(digits));
+
+  while (Math.abs(rounded) >= 1000 && tier < maxTier) {
+    tier += 1;
+    scaled = value / Math.pow(10, tier * 3);
+    digits = computeDigits(scaled);
+    rounded = Number(scaled.toFixed(digits));
+  }
+
+  const formatted = new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+  }).format(rounded);
+
+  return `${formatted}${suffixes[tier]}`;
+};
 
 function defaultBlessingState() {
   return {
