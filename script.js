@@ -15,6 +15,13 @@ const blessingStatusEl = document.getElementById("blessing-status");
 const prayerPanel = document.getElementById("prayer-panel");
 const prayerBtn = document.getElementById("prayer-btn");
 const prayerStatusEl = document.getElementById("prayer-status");
+const rebirthPanel = document.getElementById("rebirth-panel");
+const rebirthBtn = document.getElementById("rebirth-btn");
+const rebirthStatusEl = document.getElementById("rebirth-status");
+const rebirthPointsEl = document.getElementById("rebirth-points");
+const rebirthBonusEl = document.getElementById("rebirth-bonus");
+const rebirthCostEl = document.getElementById("rebirth-cost");
+const rebirthCountEl = document.getElementById("rebirth-count");
 const accountBtn = document.getElementById("account-btn");
 const accountOverlay = document.getElementById("account-overlay");
 const accountLoginTab = document.getElementById("account-login-tab");
@@ -73,6 +80,9 @@ const BLESSING_REWARDS = [
 ];
 const PRAYER_UNLOCK_THRESHOLD = 50;
 const PRAYER_COOLDOWN_MS = 5 * 60 * 1000;
+const REBIRTH_UNLOCK_AURA = 1_000_000;
+const REBIRTH_INITIAL_COST = 1_000_000_000;
+const REBIRTH_COST_MULTIPLIER = 1000;
 const BASE_KACPERS = [
   {
     id: "baby",
@@ -188,6 +198,15 @@ function defaultPrayerState() {
   };
 }
 
+function defaultRebirthState() {
+  return {
+    unlocked: false,
+    count: 0,
+    points: 0,
+    nextCost: REBIRTH_INITIAL_COST,
+  };
+}
+
 function cloneBaseKacpers(saved = []) {
   return BASE_KACPERS.map((base) => {
     const stored = saved.find((item) => item.id === base.id);
@@ -206,6 +225,7 @@ function defaultState() {
     kacpers: cloneBaseKacpers(),
     blessing: defaultBlessingState(),
     prayer: defaultPrayerState(),
+    rebirth: defaultRebirthState(),
   };
 }
 
@@ -247,6 +267,26 @@ function sanitizePrayerState(raw) {
   };
 }
 
+function sanitizeRebirthState(raw) {
+  if (!raw || typeof raw !== "object") {
+    return defaultRebirthState();
+  }
+  const count = Number(raw.count);
+  const points = Number(raw.points);
+  const nextCost = Number(raw.nextCost);
+  const rebirth = {
+    unlocked: Boolean(raw.unlocked),
+    count: Number.isFinite(count) && count >= 0 ? Math.floor(count) : 0,
+    points: Number.isFinite(points) && points >= 0 ? Math.floor(points) : 0,
+    nextCost:
+      Number.isFinite(nextCost) && nextCost > 0 ? nextCost : REBIRTH_INITIAL_COST,
+  };
+  if (rebirth.count > 0 || rebirth.points > 0) {
+    rebirth.unlocked = true;
+  }
+  return rebirth;
+}
+
 function deserializeState(raw) {
   if (!raw || typeof raw !== "object") {
     return defaultState();
@@ -269,6 +309,7 @@ function deserializeState(raw) {
     lastOutcome: sanitizeLastOutcome(raw.blessing?.lastOutcome),
   };
   state.prayer = sanitizePrayerState(raw.prayer || {});
+  state.rebirth = sanitizeRebirthState(raw.rebirth || {});
   return state;
 }
 
@@ -308,6 +349,20 @@ function serializeState(currentState) {
         currentState.prayer.nextAvailableAt >= 0
           ? Math.floor(currentState.prayer.nextAvailableAt)
           : 0,
+    },
+    rebirth: {
+      unlocked: Boolean(currentState.rebirth?.unlocked),
+      count: Number.isFinite(Number(currentState.rebirth?.count))
+        ? Math.max(0, Math.floor(Number(currentState.rebirth.count)))
+        : 0,
+      points: Number.isFinite(Number(currentState.rebirth?.points))
+        ? Math.max(0, Math.floor(Number(currentState.rebirth.points)))
+        : 0,
+      nextCost:
+        typeof currentState.rebirth?.nextCost === "number" &&
+        currentState.rebirth.nextCost > 0
+          ? currentState.rebirth.nextCost
+          : REBIRTH_INITIAL_COST,
     },
   };
 }
@@ -374,6 +429,7 @@ function normalizeLeaderboard(entries) {
     .map((entry) => ({
       name: (entry.name || "Anonyme").toString().slice(0, 32),
       aura: Number(entry.aura) || 0,
+      rebirths: Math.max(0, Math.floor(Number(entry.rebirths) || 0)),
     }))
     .filter((entry) => entry.name);
 }
@@ -665,7 +721,10 @@ function renderLeaderboard() {
 
     const auraValue = document.createElement("span");
     auraValue.className = "aura";
-    auraValue.textContent = `${formatNumber(entry.aura)} aura`;
+    const rebirths = Number(entry.rebirths) || 0;
+    const rebirthSuffix =
+      rebirths > 0 ? ` - ${rebirths} renaissance${rebirths > 1 ? "s" : ""}` : "";
+    auraValue.textContent = `${formatNumber(entry.aura)} aura${rebirthSuffix}`;
 
     li.append(nameWrap, auraValue);
     fragment.appendChild(li);
@@ -702,6 +761,7 @@ async function submitScoreToServer() {
   const payload = {
     name: state.playerName,
     aura: Number(state.aura.toFixed(2)),
+    rebirths: Number(state.rebirth?.count || 0),
   };
   const response = await abortableFetch(`${API_BASE_URL}/leaderboard`, {
     method: "POST",
@@ -799,6 +859,7 @@ function applyRemoteState(rawState, { syncLeaderboard = true } = {}) {
   state.kacpers = normalized.kacpers;
   state.blessing = normalized.blessing;
   state.prayer = normalized.prayer;
+  state.rebirth = normalized.rebirth;
   saveState(state);
   refreshUI(undefined, false);
   suppressRemotePersist = false;
@@ -958,6 +1019,18 @@ function persistState(force = false) {
   }
 }
 
+function getProductionMultiplier() {
+  return 1 + (state.rebirth?.points || 0);
+}
+
+function getBlessingMultiplier() {
+  return 1 + (state.blessing?.rateBonus || 0);
+}
+
+function getTotalMultiplier() {
+  return getProductionMultiplier() * getBlessingMultiplier();
+}
+
 function initShop() {
   state.kacpers.forEach((kacper) => {
     const node = template.content.cloneNode(true);
@@ -993,8 +1066,7 @@ function getAuraRate() {
     (total, { production, owned }) => total + production * owned,
     0
   );
-  const bonusMultiplier = 1 + (state.blessing?.rateBonus || 0);
-  return baseRate * bonusMultiplier;
+  return baseRate * getTotalMultiplier();
 }
 
 function buyKacper(id) {
@@ -1024,8 +1096,10 @@ function refreshUI(rate, forcePersist = false) {
 
   const unlockedBlessingNow = maybeUnlockBlessing();
   const unlockedPrayerNow = maybeUnlockPrayer();
+  const unlockedRebirthNow = maybeUnlockRebirth();
   updateBlessingUI();
   updatePrayerUI();
+  updateRebirthUI();
 
   state.kacpers.forEach((kacper) => {
     const elements = elementsById.get(kacper.id);
@@ -1033,7 +1107,9 @@ function refreshUI(rate, forcePersist = false) {
     elements.button.disabled = state.aura < kacper.cost;
   });
 
-  persistState(forcePersist || unlockedBlessingNow || unlockedPrayerNow);
+  persistState(
+    forcePersist || unlockedBlessingNow || unlockedPrayerNow || unlockedRebirthNow
+  );
   maybeSyncLeaderboard(forcePersist);
 }
 
@@ -1075,7 +1151,7 @@ bootstrapLeaderboard();
 
 if (meditateBtn) {
   meditateBtn.addEventListener("click", () => {
-    state.aura += MANUAL_GAIN;
+    state.aura += MANUAL_GAIN * getProductionMultiplier();
     refreshUI(undefined, true);
   });
 }
@@ -1124,11 +1200,16 @@ if (prayerBtn) {
   prayerBtn.addEventListener("click", attemptPrayer);
 }
 
+if (rebirthBtn) {
+  rebirthBtn.addEventListener("click", attemptRebirth);
+}
+
 if (blessingBtn) {
   blessingBtn.addEventListener("click", attemptBlessingPurchase);
   updateBlessingUI();
 }
 updatePrayerUI();
+updateRebirthUI();
 
 applyAccountSessionUI();
 bootstrapAccountSession();
@@ -1347,6 +1428,125 @@ function rollBlessingReward() {
   }
   return null;
 }
+
+function setRebirthStatus(message) {
+  if (!rebirthStatusEl) return;
+  rebirthStatusEl.textContent = message;
+}
+
+function getNextRebirthCost() {
+  const storedCost = state.rebirth?.nextCost;
+  if (typeof storedCost === "number" && storedCost > 0) {
+    return storedCost;
+  }
+  return REBIRTH_INITIAL_COST;
+}
+
+function maybeUnlockRebirth() {
+  if (!state.rebirth) {
+    state.rebirth = defaultRebirthState();
+  }
+  if (
+    typeof state.rebirth.nextCost !== "number" ||
+    state.rebirth.nextCost <= 0
+  ) {
+    state.rebirth.nextCost = REBIRTH_INITIAL_COST;
+  }
+  if (state.rebirth.unlocked) return false;
+  if ((state.rebirth.count || 0) > 0 || (state.rebirth.points || 0) > 0) {
+    state.rebirth.unlocked = true;
+    return true;
+  }
+  if (state.aura >= REBIRTH_UNLOCK_AURA) {
+    state.rebirth.unlocked = true;
+    return true;
+  }
+  return false;
+}
+
+function getRebirthStatusText() {
+  if (!state.rebirth?.unlocked) {
+    return `Accumule ${formatNumber(REBIRTH_UNLOCK_AURA)} aura pour decouvrir la renaissance.`;
+  }
+  const cost = getNextRebirthCost();
+  if (state.aura >= cost) {
+    return "Renais pour gagner 1 point univers et doubler ta production.";
+  }
+  const missing = Math.max(0, cost - state.aura);
+  return `Il te manque ${formatNumber(missing)} aura pour renaitre.`;
+}
+
+function updateRebirthUI() {
+  if (!rebirthPanel || !state.rebirth) return;
+  if (!state.rebirth.unlocked) {
+    rebirthPanel.classList.add("hidden");
+    if (rebirthCostEl) {
+      rebirthCostEl.textContent = formatNumber(getNextRebirthCost());
+    }
+    setRebirthStatus(
+      `Accumule ${formatNumber(REBIRTH_UNLOCK_AURA)} aura pour decouvrir la renaissance.`
+    );
+    return;
+  }
+
+  rebirthPanel.classList.remove("hidden");
+
+  const points = state.rebirth.points || 0;
+  const bonusPercent = points * 100;
+  if (rebirthPointsEl) {
+    rebirthPointsEl.textContent = `${points}`;
+  }
+  if (rebirthBonusEl) {
+    rebirthBonusEl.textContent = `+${bonusPercent}% aura`;
+  }
+  if (rebirthCountEl) {
+    rebirthCountEl.textContent = `${state.rebirth.count || 0}`;
+  }
+
+  const cost = getNextRebirthCost();
+  const canRebirth = state.aura >= cost;
+  if (rebirthBtn) {
+    rebirthBtn.disabled = !canRebirth;
+    rebirthBtn.textContent = `Renaissance (${formatNumber(cost)} aura)`;
+  }
+  if (rebirthCostEl) {
+    rebirthCostEl.textContent = formatNumber(cost);
+  }
+
+  setRebirthStatus(getRebirthStatusText());
+}
+
+function attemptRebirth() {
+  if (!state.rebirth?.unlocked) return;
+  const cost = getNextRebirthCost();
+  if (state.aura < cost) {
+    setRebirthStatus(getRebirthStatusText());
+    return;
+  }
+  performRebirth();
+}
+
+function performRebirth() {
+  const preservedName = state.playerName;
+  const previousRebirth = state.rebirth || defaultRebirthState();
+  const cost = getNextRebirthCost();
+
+  state.rebirth = {
+    unlocked: true,
+    count: (previousRebirth.count || 0) + 1,
+    points: (previousRebirth.points || 0) + 1,
+    nextCost: Math.round(cost * REBIRTH_COST_MULTIPLIER),
+  };
+
+  state.aura = 0;
+  state.kacpers = cloneBaseKacpers();
+  state.blessing = defaultBlessingState();
+  state.prayer = defaultPrayerState();
+  state.playerName = preservedName;
+
+  refreshUI(undefined, true);
+}
+
 
 
 

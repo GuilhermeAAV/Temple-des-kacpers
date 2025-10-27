@@ -13,6 +13,7 @@ const ACCOUNTS_FILE = path.join(
 );
 const MAX_ENTRIES = 12;
 const DEFAULT_BLESSING_COST = 100;
+const DEFAULT_REBIRTH_COST = 1_000_000_000;
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(DATA_FILE)) {
@@ -27,7 +28,16 @@ function readLeaderboard() {
     const raw = fs.readFileSync(DATA_FILE, "utf8");
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed;
+      return parsed.map((entry) => {
+        if (
+          typeof entry === "object" &&
+          entry !== null &&
+          !Number.isFinite(entry.rebirths)
+        ) {
+          return { ...entry, rebirths: 0 };
+        }
+        return entry;
+      });
     }
   } catch (error) {
     console.warn("Failed to read leaderboard:", error);
@@ -179,6 +189,23 @@ function sanitizePrayer(raw = {}) {
   return normalized;
 }
 
+function sanitizeRebirth(raw = {}) {
+  const countRaw = Number(raw.count);
+  const pointsRaw = Number(raw.points);
+  const nextCostRaw = Number(raw.nextCost);
+  const normalized = {
+    unlocked: Boolean(raw.unlocked),
+    count: Number.isFinite(countRaw) && countRaw >= 0 ? Math.floor(countRaw) : 0,
+    points: Number.isFinite(pointsRaw) && pointsRaw >= 0 ? Math.floor(pointsRaw) : 0,
+    nextCost:
+      Number.isFinite(nextCostRaw) && nextCostRaw > 0 ? nextCostRaw : DEFAULT_REBIRTH_COST,
+  };
+  if (normalized.count > 0 || normalized.points > 0) {
+    normalized.unlocked = true;
+  }
+  return normalized;
+}
+
 function sanitizeStatePayload(payload = {}, fallbackName = "") {
   const auraRaw = Number(payload.aura);
   const kacpers = Array.isArray(payload.kacpers)
@@ -195,6 +222,7 @@ function sanitizeStatePayload(payload = {}, fallbackName = "") {
     kacpers,
     blessing: sanitizeBlessing(payload.blessing || {}),
     prayer: sanitizePrayer(payload.prayer || {}),
+    rebirth: sanitizeRebirth(payload.rebirth || {}),
   };
 }
 
@@ -207,11 +235,19 @@ function ensureAccountState(account) {
   return account.state;
 }
 
-function upsertLeaderboardEntry(leaderboard, name, aura, accountId = null) {
+function upsertLeaderboardEntry(
+  leaderboard,
+  name,
+  aura,
+  accountId = null,
+  rebirths = 0
+) {
   const trimmedName = sanitizeName(name || "");
   if (!trimmedName) return leaderboard;
   const roundedAura = Math.round(Math.max(0, Number(aura) || 0) * 100) / 100;
   const now = new Date().toISOString();
+  const sanitizedRebirths =
+    Number.isFinite(rebirths) && rebirths >= 0 ? Math.floor(rebirths) : 0;
 
   let targetIndex = -1;
   if (accountId) {
@@ -230,11 +266,17 @@ function upsertLeaderboardEntry(leaderboard, name, aura, accountId = null) {
     }
     entry.name = trimmedName;
     entry.updatedAt = now;
+    const previousRebirths =
+      Number.isFinite(entry.rebirths) && entry.rebirths >= 0
+        ? Math.floor(entry.rebirths)
+        : 0;
+    entry.rebirths = Math.max(previousRebirths, sanitizedRebirths);
     if (accountId) entry.accountId = accountId;
   } else {
     leaderboard.push({
       name: trimmedName,
       aura: roundedAura,
+      rebirths: sanitizedRebirths,
       updatedAt: now,
       ...(accountId ? { accountId } : {}),
     });
@@ -332,7 +374,8 @@ async function handleRequest(req, res) {
         leaderboard,
         state.playerName || name,
         state.aura,
-        accountRecord.nameLower
+        accountRecord.nameLower,
+        state.rebirth?.count || 0
       );
       writeLeaderboard(leaderboard);
 
@@ -434,7 +477,8 @@ async function handleRequest(req, res) {
         leaderboard,
         state.playerName || account.name,
         state.aura,
-        account.nameLower || account.name.toLowerCase()
+        account.nameLower || account.name.toLowerCase(),
+        state.rebirth?.count || 0
       );
       writeLeaderboard(leaderboard);
 
@@ -458,8 +502,9 @@ async function handleRequest(req, res) {
       if (!name || !Number.isFinite(aura) || aura < 0) {
         return sendJson(res, 400, { error: "Invalid payload" });
       }
+      const rebirths = Number(payload.rebirths);
       const leaderboard = readLeaderboard();
-      upsertLeaderboardEntry(leaderboard, name, aura);
+      upsertLeaderboardEntry(leaderboard, name, aura, null, rebirths);
       writeLeaderboard(leaderboard);
       return sendJson(res, 200, leaderboard);
     } catch (error) {
