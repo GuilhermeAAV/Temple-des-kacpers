@@ -30,6 +30,12 @@ const BLESSING_REWARDS = [
     chance: 0.5,
     bonus: 0.2,
   },
+      {
+    id: "sausage",
+    name: "La saucisse de kacper",
+    chance: 0.1,
+    bonus: 0.50,
+  },
   {
     id: "car",
     name: "La voiture de Kacper",
@@ -42,6 +48,7 @@ const BLESSING_REWARDS = [
     chance: 0.0001,
     bonus: 8,
   },
+
 ];
 const BASE_KACPERS = [
   {
