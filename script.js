@@ -39,7 +39,7 @@ const BLESSING_REWARDS = [
   {
     id: "lover",
     name: "La meuf de Kacper",
-    chance: 0.00001,
+    chance: 0.0001,
     bonus: 8,
   },
 ];
@@ -63,7 +63,7 @@ const BASE_KACPERS = [
     {
     id: "chemise",
     name: "Kacper avec chemise",
-    description: "Ca chemise éclaire nos soirée",
+    description: "Ca chemise éclaire nos soirées",
     production: 7.5,
     cost: 1000,
     owned: 0,
