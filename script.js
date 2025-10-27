@@ -81,6 +81,7 @@ function defaultBlessingState() {
     unlocked: false,
     cost: BLESSING_INITIAL_COST,
     purchaseCount: 0,
+    rateBonus: 0,
   };
 }
 
@@ -123,6 +124,7 @@ function loadState() {
             ? parsed.blessing.cost
             : BLESSING_INITIAL_COST,
         purchaseCount: Number(parsed.blessing?.purchaseCount) || 0,
+        rateBonus: Number(parsed.blessing?.rateBonus) || 0,
       },
     };
   } catch (error) {
@@ -148,6 +150,7 @@ function saveState(currentState) {
             ? currentState.blessing.cost
             : BLESSING_INITIAL_COST,
         purchaseCount: Number(currentState.blessing?.purchaseCount) || 0,
+        rateBonus: Number(currentState.blessing?.rateBonus) || 0,
       },
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -369,10 +372,12 @@ function initShop() {
 }
 
 function getAuraRate() {
-  return state.kacpers.reduce(
+  const baseRate = state.kacpers.reduce(
     (total, { production, owned }) => total + production * owned,
     0
   );
+  const bonusMultiplier = 1 + (state.blessing?.rateBonus || 0);
+  return baseRate * bonusMultiplier;
 }
 
 function buyKacper(id) {
@@ -527,13 +532,15 @@ function attemptBlessingPurchase() {
 
   const reward = rollBlessingReward();
   if (reward) {
-    const previousAura = state.aura;
-    state.aura = Number((state.aura * (1 + reward.bonus)).toFixed(4));
-    const gained = state.aura - previousAura;
+    state.blessing.rateBonus = Number(
+      (state.blessing.rateBonus + reward.bonus).toFixed(4)
+    );
     setBlessingStatus(
-      `${reward.name} t'offre +${Math.round(
+      `${reward.name} galvanise ta production : +${Math.round(
         reward.bonus * 100
-      )}% d'aura (${formatNumber(gained)}).`
+      )}% aura/s (bonus total +${Math.round(
+        state.blessing.rateBonus * 100
+      )}% aura/s).`
     );
   } else {
     setBlessingStatus("Les esprits restent silencieux... aucune bénédiction.");
