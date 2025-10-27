@@ -154,6 +154,31 @@ function sanitizeBlessing(raw = {}) {
   return normalized;
 }
 
+function sanitizePrayer(raw = {}) {
+  const normalized = {
+    unlocked: Boolean(raw.unlocked),
+    lastReward: null,
+    nextAvailableAt: 0,
+  };
+
+  if (raw.lastReward && typeof raw.lastReward === "object") {
+    const reward = raw.lastReward;
+    const ownedRaw = Number(reward.owned);
+    normalized.lastReward = {
+      id: sanitizeId(reward.id || ""),
+      name: sanitizeName(reward.name || ""),
+      owned: Number.isFinite(ownedRaw) && ownedRaw >= 0 ? Math.floor(ownedRaw) : 0,
+    };
+  }
+
+  const nextAvailableAtRaw = Number(raw.nextAvailableAt);
+  if (Number.isFinite(nextAvailableAtRaw) && nextAvailableAtRaw >= 0) {
+    normalized.nextAvailableAt = Math.floor(nextAvailableAtRaw);
+  }
+
+  return normalized;
+}
+
 function sanitizeStatePayload(payload = {}, fallbackName = "") {
   const auraRaw = Number(payload.aura);
   const kacpers = Array.isArray(payload.kacpers)
@@ -169,6 +194,7 @@ function sanitizeStatePayload(payload = {}, fallbackName = "") {
     playerName,
     kacpers,
     blessing: sanitizeBlessing(payload.blessing || {}),
+    prayer: sanitizePrayer(payload.prayer || {}),
   };
 }
 

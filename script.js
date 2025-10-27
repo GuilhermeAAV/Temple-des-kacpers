@@ -12,6 +12,9 @@ const leaderboardStatusEl = document.getElementById("leaderboard-status");
 const blessingPanel = document.getElementById("blessing-panel");
 const blessingBtn = document.getElementById("blessing-btn");
 const blessingStatusEl = document.getElementById("blessing-status");
+const prayerPanel = document.getElementById("prayer-panel");
+const prayerBtn = document.getElementById("prayer-btn");
+const prayerStatusEl = document.getElementById("prayer-status");
 const accountBtn = document.getElementById("account-btn");
 const accountOverlay = document.getElementById("account-overlay");
 const accountLoginTab = document.getElementById("account-login-tab");
@@ -68,6 +71,8 @@ const BLESSING_REWARDS = [
   },
 
 ];
+const PRAYER_UNLOCK_THRESHOLD = 50;
+const PRAYER_COOLDOWN_MS = 5 * 60 * 1000;
 const BASE_KACPERS = [
   {
     id: "baby",
@@ -175,6 +180,14 @@ function defaultBlessingState() {
   };
 }
 
+function defaultPrayerState() {
+  return {
+    unlocked: false,
+    lastReward: null,
+    nextAvailableAt: 0,
+  };
+}
+
 function cloneBaseKacpers(saved = []) {
   return BASE_KACPERS.map((base) => {
     const stored = saved.find((item) => item.id === base.id);
@@ -192,6 +205,7 @@ function defaultState() {
     playerName: "",
     kacpers: cloneBaseKacpers(),
     blessing: defaultBlessingState(),
+    prayer: defaultPrayerState(),
   };
 }
 
@@ -210,6 +224,27 @@ function sanitizeLastOutcome(raw) {
     return { type: "none" };
   }
   return null;
+}
+
+function sanitizePrayerState(raw) {
+  const unlocked = Boolean(raw?.unlocked);
+  let lastReward = null;
+  if (raw?.lastReward && typeof raw.lastReward === "object") {
+    lastReward = {
+      id: (raw.lastReward.id || "").toString().slice(0, 64),
+      name: (raw.lastReward.name || "").toString().slice(0, 64),
+      owned: Number.isFinite(Number(raw.lastReward.owned))
+        ? Math.max(0, Math.floor(Number(raw.lastReward.owned)))
+        : 0,
+    };
+  }
+  const nextAvailableAt = Number(raw?.nextAvailableAt);
+  return {
+    unlocked,
+    lastReward,
+    nextAvailableAt:
+      Number.isFinite(nextAvailableAt) && nextAvailableAt >= 0 ? nextAvailableAt : 0,
+  };
 }
 
 function deserializeState(raw) {
@@ -233,6 +268,7 @@ function deserializeState(raw) {
     rateBonus: Number(raw.blessing?.rateBonus) || 0,
     lastOutcome: sanitizeLastOutcome(raw.blessing?.lastOutcome),
   };
+  state.prayer = sanitizePrayerState(raw.prayer || {});
   return state;
 }
 
@@ -255,6 +291,23 @@ function serializeState(currentState) {
       purchaseCount: Number(currentState.blessing?.purchaseCount) || 0,
       rateBonus: Number(currentState.blessing?.rateBonus) || 0,
       lastOutcome: sanitizeLastOutcome(currentState.blessing?.lastOutcome),
+    },
+    prayer: {
+      unlocked: Boolean(currentState.prayer?.unlocked),
+      lastReward: currentState.prayer?.lastReward
+        ? {
+            id: (currentState.prayer.lastReward.id || "").toString().slice(0, 64),
+            name: (currentState.prayer.lastReward.name || "").toString().slice(0, 64),
+            owned: Number.isFinite(Number(currentState.prayer.lastReward.owned))
+              ? Math.max(0, Math.floor(Number(currentState.prayer.lastReward.owned)))
+              : 0,
+          }
+        : null,
+      nextAvailableAt:
+        typeof currentState.prayer?.nextAvailableAt === "number" &&
+        currentState.prayer.nextAvailableAt >= 0
+          ? Math.floor(currentState.prayer.nextAvailableAt)
+          : 0,
     },
   };
 }
@@ -745,6 +798,7 @@ function applyRemoteState(rawState, { syncLeaderboard = true } = {}) {
   state.playerName = normalized.playerName;
   state.kacpers = normalized.kacpers;
   state.blessing = normalized.blessing;
+  state.prayer = normalized.prayer;
   saveState(state);
   refreshUI(undefined, false);
   suppressRemotePersist = false;
@@ -968,8 +1022,10 @@ function refreshUI(rate, forcePersist = false) {
   auraCountEl.textContent = formatNumber(state.aura);
   auraRateEl.textContent = formatNumber(currentRate);
 
-  const unlockedNow = maybeUnlockBlessing();
+  const unlockedBlessingNow = maybeUnlockBlessing();
+  const unlockedPrayerNow = maybeUnlockPrayer();
   updateBlessingUI();
+  updatePrayerUI();
 
   state.kacpers.forEach((kacper) => {
     const elements = elementsById.get(kacper.id);
@@ -977,7 +1033,7 @@ function refreshUI(rate, forcePersist = false) {
     elements.button.disabled = state.aura < kacper.cost;
   });
 
-  persistState(forcePersist || unlockedNow);
+  persistState(forcePersist || unlockedBlessingNow || unlockedPrayerNow);
   maybeSyncLeaderboard(forcePersist);
 }
 
@@ -1064,10 +1120,15 @@ if (registerForm) {
   registerForm.addEventListener("submit", handleRegisterSubmit);
 }
 
+if (prayerBtn) {
+  prayerBtn.addEventListener("click", attemptPrayer);
+}
+
 if (blessingBtn) {
   blessingBtn.addEventListener("click", attemptBlessingPurchase);
   updateBlessingUI();
 }
+updatePrayerUI();
 
 applyAccountSessionUI();
 bootstrapAccountSession();
@@ -1093,7 +1154,7 @@ function updateBlessingUI() {
   if (!state.blessing.unlocked) {
     blessingPanel.classList.add("hidden");
     if (blessingStatusEl) {
-      blessingStatusEl.textContent = `Accumule ${BLESSING_UNLOCK_THRESHOLD} auras pour débloquer le rituel.`;
+      blessingStatusEl.textContent = `Accumule ${BLESSING_UNLOCK_THRESHOLD} auras pour debloquer le rituel.`;
     }
     return;
   }
@@ -1114,7 +1175,7 @@ function updateBlessingUI() {
 
 function getBlessingStatusText() {
   if (!state.blessing?.unlocked) {
-    return `Accumule ${BLESSING_UNLOCK_THRESHOLD} auras pour débloquer le rituel.`;
+    return `Accumule ${BLESSING_UNLOCK_THRESHOLD} auras pour debloquer le rituel.`;
   }
 
   const outcome = state.blessing.lastOutcome;
@@ -1129,10 +1190,121 @@ function getBlessingStatusText() {
   }
 
   if (outcome.type === "none") {
-    return "Les esprits restent silencieux... aucune bénédiction.";
+    return "Les esprits restent silencieux... aucune benediction.";
   }
 
   return "Les esprits attendent ton offrande.";
+}
+
+function setPrayerStatus(message) {
+  if (!prayerStatusEl) return;
+  prayerStatusEl.textContent = message;
+}
+
+function getPrayerCooldownRemainingMs() {
+  if (!state.prayer?.nextAvailableAt) return 0;
+  return Math.max(0, state.prayer.nextAvailableAt - Date.now());
+}
+
+function formatCooldown(ms) {
+  const totalSeconds = Math.ceil(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function getPrayerStatusText() {
+  if (!state.prayer?.unlocked) {
+    return `Accumule ${PRAYER_UNLOCK_THRESHOLD} auras pour prier Kacper.`;
+  }
+  const remaining = getPrayerCooldownRemainingMs();
+  const reward = state.prayer.lastReward;
+  if (remaining > 0) {
+    const formatted = formatCooldown(remaining);
+    if (reward?.name) {
+      return `${reward.name} veille sur toi. Prochaine priere dans ${formatted}.`;
+    }
+    return `Prochaine priere dans ${formatted}.`;
+  }
+  if (!reward) {
+    return "Chaque priere peut attirer un nouveau Kacper.";
+  }
+  if (reward.name) {
+    return `Kacper ${reward.name} repond a ton appel ! (total ${reward.owned}).`;
+  }
+  return "Les esprits murmurent a ton oreille.";
+}
+
+function maybeUnlockPrayer() {
+  if (!state.prayer) {
+    state.prayer = defaultPrayerState();
+  }
+  if (state.prayer.unlocked) return false;
+  if (state.aura >= PRAYER_UNLOCK_THRESHOLD) {
+    state.prayer.unlocked = true;
+    return true;
+  }
+  return false;
+}
+
+function updatePrayerUI() {
+  if (!prayerPanel || !state.prayer) return;
+  if (!state.prayer.unlocked) {
+    prayerPanel.classList.add("hidden");
+    setPrayerStatus(`Accumule ${PRAYER_UNLOCK_THRESHOLD} auras pour prier Kacper.`);
+    return;
+  }
+  prayerPanel.classList.remove("hidden");
+  const remaining = getPrayerCooldownRemainingMs();
+  if (prayerBtn) {
+    prayerBtn.disabled = remaining > 0;
+  }
+  setPrayerStatus(getPrayerStatusText());
+}
+
+function rollPrayerReward() {
+  const candidates = state.kacpers.filter(
+    (kacper) => typeof kacper.production === "number" && kacper.production > 0
+  );
+  if (!candidates.length) return null;
+  const weights = candidates.map(
+    (kacper) => 1 / Math.max(kacper.production, 0.1)
+  );
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  let roll = Math.random() * totalWeight;
+  for (let index = 0; index < candidates.length; index += 1) {
+    roll -= weights[index];
+    if (roll <= 0) {
+      return candidates[index];
+    }
+  }
+  return candidates[candidates.length - 1] || null;
+}
+
+function attemptPrayer() {
+  if (!state.prayer?.unlocked) return;
+  const remaining = getPrayerCooldownRemainingMs();
+  if (remaining > 0) {
+    setPrayerStatus(getPrayerStatusText());
+    return;
+  }
+
+  const reward = rollPrayerReward();
+  if (!reward) {
+    setPrayerStatus("Les esprits restent silencieux...");
+    return;
+  }
+
+  reward.owned += 1;
+  reward.cost = +(reward.cost * 1.15).toFixed(2);
+  updateKacperCard(reward);
+  state.prayer.lastReward = {
+    id: reward.id,
+    name: reward.name,
+    owned: reward.owned,
+  };
+  state.prayer.nextAvailableAt = Date.now() + PRAYER_COOLDOWN_MS;
+  refreshUI(undefined, true);
 }
 
 function attemptBlessingPurchase() {
@@ -1175,5 +1347,6 @@ function rollBlessingReward() {
   }
   return null;
 }
+
 
 
