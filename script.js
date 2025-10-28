@@ -124,12 +124,20 @@ const BASE_KACPERS = [
     cost: 20000000,
     owned: 0,
   },
-      {
+  {
     id: "pecho",
     name: "Kacper qui pécho",
     description: "Kacper a réussi à trouver sa femelle, c'est un événement rare.",
-    production: 150000,
+    production: 200000,
     cost: 4000000000,
+    owned: 0,
+  },
+    {
+    id: "prie",
+    name: "Kacper qui prie",
+    description: "Quand Kacper qui prie, le monde va mieux",
+    production: 9000000,
+    cost: 1000000000000,
     owned: 0,
   },
 ];
@@ -226,6 +234,7 @@ function defaultState() {
     blessing: defaultBlessingState(),
     prayer: defaultPrayerState(),
     rebirth: defaultRebirthState(),
+    savedAt: 0,
   };
 }
 
@@ -296,6 +305,9 @@ function deserializeState(raw) {
   const auraValue = Number(raw.aura);
   state.aura = Number.isFinite(auraValue) && auraValue >= 0 ? auraValue : 0;
   state.playerName = (raw.playerName || "").toString().slice(0, 32);
+  const savedAtValue = Number(raw.savedAt);
+  state.savedAt =
+    Number.isFinite(savedAtValue) && savedAtValue > 0 ? Math.floor(savedAtValue) : 0;
   state.kacpers = cloneBaseKacpers(raw.kacpers || []);
   state.blessing = {
     ...defaultBlessingState(),
@@ -314,6 +326,10 @@ function deserializeState(raw) {
 }
 
 function serializeState(currentState) {
+  const savedAtValue =
+    typeof currentState.savedAt === "number" && currentState.savedAt > 0
+      ? Math.floor(currentState.savedAt)
+      : Date.now();
   return {
     aura: Number(currentState.aura) || 0,
     playerName: (currentState.playerName || "").toString().slice(0, 32),
@@ -364,6 +380,7 @@ function serializeState(currentState) {
           ? currentState.rebirth.nextCost
           : REBIRTH_INITIAL_COST,
     },
+    savedAt: savedAtValue,
   };
 }
 
@@ -850,9 +867,98 @@ async function saveProgressToServer(payload) {
   });
 }
 
-function applyRemoteState(rawState, { syncLeaderboard = true } = {}) {
-  if (!rawState) return;
+const REMOTE_STATE_TIME_TOLERANCE_MS = 1000;
+
+function computeStateMetrics(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") {
+    return {
+      savedAt: 0,
+      aura: 0,
+      rebirthCount: 0,
+      rebirthPoints: 0,
+      rateBonus: 0,
+      totalOwned: 0,
+    };
+  }
+
+  const savedAtValue = Number(snapshot.savedAt);
+  const auraValue = Number(snapshot.aura);
+  const rebirthCount = Number(snapshot.rebirth?.count);
+  const rebirthPoints = Number(snapshot.rebirth?.points);
+  const rateBonus = Number(snapshot.blessing?.rateBonus);
+  const totalOwned = Array.isArray(snapshot.kacpers)
+    ? snapshot.kacpers.reduce((sum, entry) => {
+        const ownedValue = Number(entry?.owned);
+        if (!Number.isFinite(ownedValue) || ownedValue <= 0) return sum;
+        return sum + Math.floor(ownedValue);
+      }, 0)
+    : 0;
+
+  return {
+    savedAt:
+      Number.isFinite(savedAtValue) && savedAtValue > 0
+        ? Math.floor(savedAtValue)
+        : 0,
+    aura: Number.isFinite(auraValue) && auraValue > 0 ? auraValue : 0,
+    rebirthCount:
+      Number.isFinite(rebirthCount) && rebirthCount > 0
+        ? Math.floor(rebirthCount)
+        : 0,
+    rebirthPoints:
+      Number.isFinite(rebirthPoints) && rebirthPoints > 0
+        ? Math.floor(rebirthPoints)
+        : 0,
+    rateBonus: Number.isFinite(rateBonus) && rateBonus > 0 ? rateBonus : 0,
+    totalOwned,
+  };
+}
+
+function shouldAdoptRemoteState(remoteSnapshot) {
+  const remote = computeStateMetrics(remoteSnapshot);
+  const local = computeStateMetrics(state);
+
+  if (remote.rebirthCount > local.rebirthCount) return true;
+  if (remote.rebirthCount < local.rebirthCount) return false;
+
+  if (remote.rebirthPoints > local.rebirthPoints) return true;
+  if (remote.rebirthPoints < local.rebirthPoints) return false;
+
+  if (remote.savedAt && local.savedAt) {
+    if (remote.savedAt > local.savedAt + REMOTE_STATE_TIME_TOLERANCE_MS) {
+      return true;
+    }
+    if (remote.savedAt < local.savedAt - REMOTE_STATE_TIME_TOLERANCE_MS) {
+      return false;
+    }
+  } else if (remote.savedAt && !local.savedAt) {
+    return true;
+  } else if (!remote.savedAt && local.savedAt) {
+    return false;
+  }
+
+  if (remote.aura > local.aura) return true;
+  if (remote.aura < local.aura) return false;
+
+  if (remote.totalOwned > local.totalOwned) return true;
+  if (remote.totalOwned < local.totalOwned) return false;
+
+  if (remote.rateBonus > local.rateBonus) return true;
+  if (remote.rateBonus < local.rateBonus) return false;
+
+  return false;
+}
+
+function applyRemoteState(rawState, { syncLeaderboard = true, force = false } = {}) {
+  if (!rawState) return false;
   const normalized = deserializeState(rawState);
+  if (!force && !shouldAdoptRemoteState(normalized)) {
+    if (!state.playerName && normalized.playerName) {
+      state.playerName = normalized.playerName;
+      persistState(true);
+    }
+    return false;
+  }
+
   suppressRemotePersist = true;
   state.aura = normalized.aura;
   state.playerName = normalized.playerName;
@@ -860,12 +966,19 @@ function applyRemoteState(rawState, { syncLeaderboard = true } = {}) {
   state.blessing = normalized.blessing;
   state.prayer = normalized.prayer;
   state.rebirth = normalized.rebirth;
+  state.savedAt =
+    typeof normalized.savedAt === "number" && normalized.savedAt > 0
+      ? normalized.savedAt
+      : Date.now();
+  refreshUI(undefined, false, { skipPersist: true });
   saveState(state);
-  refreshUI(undefined, false);
+  lastPersistTime =
+    typeof performance !== "undefined" ? performance.now() : Date.now();
   suppressRemotePersist = false;
   if (syncLeaderboard) {
     maybeSyncLeaderboard(true);
   }
+  return true;
 }
 
 async function bootstrapAccountSession() {
@@ -884,13 +997,24 @@ async function bootstrapAccountSession() {
     const response = await fetchProgressFromServer();
     const accountName = response?.account?.name || accountSession.name;
     setAccountSession({ name: accountName, token: accountSession.token });
+    let statusSuffix = "";
     if (response?.state) {
-      applyRemoteState(response.state);
+      const restored = applyRemoteState(response.state);
+      if (restored) {
+        statusSuffix = " (progression restaurée)";
+      } else {
+        if (!state.playerName) {
+          state.playerName = accountName;
+          persistState(true);
+        }
+        scheduleRemotePersist(true);
+        statusSuffix = " (progression locale conservée)";
+      }
     } else if (!state.playerName) {
       state.playerName = accountName;
-      saveState(state);
+      persistState(true);
     }
-    updateAccountStatus(`Connecte en tant que ${accountName}`, "success");
+    updateAccountStatus(`Connecte en tant que ${accountName}${statusSuffix}`, "success");
   } catch (error) {
     console.warn("Impossible de charger la progression distante :", error);
     updateAccountStatus("Serveur inaccessible pour le compte.", "error");
@@ -995,7 +1119,7 @@ async function runRemotePersist() {
     const response = await saveProgressToServer(payload);
     remotePersistRequested = false;
     if (response?.state) {
-      applyRemoteState(response.state, { syncLeaderboard: false });
+      applyRemoteState(response.state, { syncLeaderboard: false, force: true });
     }
   } catch (error) {
     console.warn("Sauvegarde distante impossible :", error);
@@ -1012,6 +1136,7 @@ function persistState(force = false) {
   const now = typeof performance !== "undefined" ? performance.now() : Date.now();
   if (!force && now - lastPersistTime < 1000) return;
   lastPersistTime = now;
+  state.savedAt = Date.now();
   saveState(state);
   if (suppressRemotePersist) return;
   if (accountSession?.token) {
@@ -1089,7 +1214,8 @@ function updateKacperCard(kacper) {
   elements.productionEl.textContent = `${kacper.production}`;
 }
 
-function refreshUI(rate, forcePersist = false) {
+function refreshUI(rate, forcePersist = false, options = {}) {
+  const { skipPersist = false } = options;
   const currentRate = typeof rate === "number" ? rate : getAuraRate();
   auraCountEl.textContent = formatNumber(state.aura);
   auraRateEl.textContent = formatNumber(currentRate);
@@ -1107,9 +1233,11 @@ function refreshUI(rate, forcePersist = false) {
     elements.button.disabled = state.aura < kacper.cost;
   });
 
-  persistState(
-    forcePersist || unlockedBlessingNow || unlockedPrayerNow || unlockedRebirthNow
-  );
+  if (!skipPersist) {
+    persistState(
+      forcePersist || unlockedBlessingNow || unlockedPrayerNow || unlockedRebirthNow
+    );
+  }
   maybeSyncLeaderboard(forcePersist);
 }
 
@@ -1546,7 +1674,3 @@ function performRebirth() {
 
   refreshUI(undefined, true);
 }
-
-
-
-

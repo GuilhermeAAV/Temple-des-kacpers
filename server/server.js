@@ -215,6 +215,9 @@ function sanitizeStatePayload(payload = {}, fallbackName = "") {
   if (!playerName && fallbackName) {
     playerName = sanitizeName(fallbackName);
   }
+  const savedAtRaw = Number(payload.savedAt);
+  const savedAt =
+    Number.isFinite(savedAtRaw) && savedAtRaw > 0 ? Math.floor(savedAtRaw) : 0;
 
   return {
     aura: Number.isFinite(auraRaw) && auraRaw >= 0 ? auraRaw : 0,
@@ -223,6 +226,7 @@ function sanitizeStatePayload(payload = {}, fallbackName = "") {
     blessing: sanitizeBlessing(payload.blessing || {}),
     prayer: sanitizePrayer(payload.prayer || {}),
     rebirth: sanitizeRebirth(payload.rebirth || {}),
+    savedAt,
   };
 }
 
@@ -523,4 +527,3 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`Kacper leaderboard server listening on http://localhost:${PORT}`);
 });
-
