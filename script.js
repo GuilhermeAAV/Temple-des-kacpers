@@ -917,33 +917,33 @@ function shouldAdoptRemoteState(remoteSnapshot) {
   const remote = computeStateMetrics(remoteSnapshot);
   const local = computeStateMetrics(state);
 
-  if (remote.rebirthCount > local.rebirthCount) return true;
-  if (remote.rebirthCount < local.rebirthCount) return false;
+  const priorityComparisons = [
+    [remote.rebirthCount, local.rebirthCount],
+    [remote.rebirthPoints, local.rebirthPoints],
+    [remote.aura, local.aura],
+    [remote.totalOwned, local.totalOwned],
+    [remote.rateBonus, local.rateBonus],
+  ];
 
-  if (remote.rebirthPoints > local.rebirthPoints) return true;
-  if (remote.rebirthPoints < local.rebirthPoints) return false;
+  for (const [remoteValue, localValue] of priorityComparisons) {
+    if (remoteValue > localValue) return true;
+    if (remoteValue < localValue) return false;
+  }
 
+  if (remote.savedAt && !local.savedAt) {
+    return true;
+  }
+  if (!remote.savedAt && local.savedAt) {
+    return false;
+  }
   if (remote.savedAt && local.savedAt) {
     if (remote.savedAt > local.savedAt + REMOTE_STATE_TIME_TOLERANCE_MS) {
       return true;
     }
-    if (remote.savedAt < local.savedAt - REMOTE_STATE_TIME_TOLERANCE_MS) {
+    if (remote.savedAt + REMOTE_STATE_TIME_TOLERANCE_MS < local.savedAt) {
       return false;
     }
-  } else if (remote.savedAt && !local.savedAt) {
-    return true;
-  } else if (!remote.savedAt && local.savedAt) {
-    return false;
   }
-
-  if (remote.aura > local.aura) return true;
-  if (remote.aura < local.aura) return false;
-
-  if (remote.totalOwned > local.totalOwned) return true;
-  if (remote.totalOwned < local.totalOwned) return false;
-
-  if (remote.rateBonus > local.rateBonus) return true;
-  if (remote.rateBonus < local.rateBonus) return false;
 
   return false;
 }
